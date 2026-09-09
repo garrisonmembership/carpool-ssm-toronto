@@ -173,6 +173,11 @@
 
     <!-- ---------- TRIP LIST VIEW ---------- -->
     <div id="view-trip-list">
+      <div class="card" style="margin-bottom:14px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:2px;">Sault Ste. Marie → Toronto</div>
+        <div style="font-size:12px; color:var(--muted);">~705 km · ~7h 40m · usual stops: Espanola, Sudbury, French River, Parry Sound</div>
+      </div>
+      <div class="stat-row" id="lifetime-summary"></div>
       <button class="primary" style="width:100%; margin-bottom:14px;" onclick="openNewTripModal()">+ New trip</button>
       <div id="trip-list-container"></div>
     </div>
@@ -375,8 +380,32 @@ function goToDrivingMode(){
 /* =========================================================================
    RENDER: trip list
    ========================================================================= */
+function tripRevenue(t){
+  let expected = 0, collected = 0;
+  (t.stops||[]).forEach(s => (s.passengers||[]).forEach(p => {
+    const amt = Number(p.price||0);
+    expected += amt;
+    if (p.paid) collected += amt;
+  }));
+  return { expected, collected };
+}
+
 function renderTripList(){
   const container = document.getElementById('trip-list-container');
+
+  // Lifetime summary across all trips
+  const summaryEl = document.getElementById('lifetime-summary');
+  if (summaryEl){
+    const totalTrips = trips.length;
+    const totalPax = trips.reduce((sum,t) => sum + (t.stops||[]).reduce((a,s)=>a+(s.passengers||[]).reduce((b,p)=>b+Number(p.seats||0),0),0), 0);
+    const totalCollected = trips.reduce((sum,t) => sum + tripRevenue(t).collected, 0);
+    summaryEl.innerHTML = `
+      <div class="stat"><div class="label">Trips run</div><div class="value">${totalTrips}</div></div>
+      <div class="stat"><div class="label">Passengers carried</div><div class="value">${totalPax}</div></div>
+      <div class="stat"><div class="label">Total collected</div><div class="value mono">$${totalCollected.toFixed(0)}</div></div>
+    `;
+  }
+
   if (trips.length === 0){
     container.innerHTML = `<div class="card" style="text-align:center; color:var(--muted);">No trips yet. Create one above.</div>`;
     return;
@@ -384,11 +413,12 @@ function renderTripList(){
   container.innerHTML = trips.map(t => {
     const stopCount = (t.stops || []).length;
     const paxCount = (t.stops || []).reduce((sum, s) => sum + (s.passengers || []).reduce((a,p)=>a+Number(p.seats||0),0), 0);
+    const { expected, collected } = tripRevenue(t);
     return `
       <div class="trip-list-item" onclick="openTrip('${t.id}')">
         <div>
           <div style="font-weight:600;">${escapeHtml(t.date || 'Untitled trip')}</div>
-          <div style="font-size:12px; color:var(--muted);">${stopCount} stops &middot; ${paxCount} seats booked</div>
+          <div style="font-size:12px; color:var(--muted);">${stopCount} stops &middot; ${paxCount} seats booked ${expected>0 ? `&middot; $${collected.toFixed(0)} / $${expected.toFixed(0)} collected` : ''}</div>
         </div>
         <button class="danger" onclick="event.stopPropagation(); deleteTrip('${t.id}')">Delete</button>
       </div>`;
@@ -448,10 +478,11 @@ function renderTripSheet(){
   const stops = trip.stops || [];
   const totalPax = stops.reduce((sum, s) => sum + (s.passengers||[]).reduce((a,p)=>a+Number(p.seats||0),0), 0);
 
+  const { expected, collected } = tripRevenue(trip);
   document.getElementById('trip-stats').innerHTML = `
     <div class="stat"><div class="label">Stops</div><div class="value">${stops.length}</div></div>
     <div class="stat"><div class="label">Seats booked</div><div class="value">${totalPax} / ${trip.carCapacity}</div></div>
-    <div class="stat"><div class="label">Departs</div><div class="value">${trip.departureTime || '—'}</div></div>
+    <div class="stat"><div class="label">Collected</div><div class="value mono">$${collected.toFixed(0)}${expected>collected ? ' / $'+expected.toFixed(0) : ''}</div></div>
   `;
 
   const container = document.getElementById('stops-container');
@@ -468,7 +499,7 @@ function renderTripSheet(){
     const passengerRows = (stop.passengers||[]).map(p => `
       <div class="passenger-row">
         <div>
-          <div style="font-size:13px; font-weight:500;">${escapeHtml(p.name)} <span style="color:var(--muted); font-weight:400;">· ${p.seats} seat${p.seats==1?'':'s'}</span></div>
+          <div style="font-size:13px; font-weight:500;">${escapeHtml(p.name)} <span style="color:var(--muted); font-weight:400;">· ${p.seats} seat${p.seats==1?'':'s'}${p.price ? ' · $'+Number(p.price).toFixed(0) : ''}</span></div>
           <span class="badge ${p.paid ? 'paid':'unpaid'}">${p.paid ? 'Paid':'Unpaid'}</span>
         </div>
         <div class="actions">
@@ -617,6 +648,7 @@ function openAddPassengerModal(stopIdx){
       <div><label>Name</label><input id="pax-name" /></div>
       <div><label>Phone</label><input id="pax-phone" type="tel" placeholder="+1 705 555 0142" /></div>
       <div><label>Seats</label><input id="pax-seats" type="number" value="1" min="1" max="${trip.carCapacity}" /></div>
+      <div><label>Price ($)</label><input id="pax-price" type="number" step="0.01" placeholder="e.g. 60" /></div>
       <div class="toggle-row"><label for="pax-paid">Marked as paid</label><input id="pax-paid" type="checkbox" /></div>
     </div>
     <div id="overbook-warning"></div>
@@ -636,6 +668,7 @@ function saveNewPassenger(stopIdx){
     name: document.getElementById('pax-name').value || 'Unnamed',
     phone: document.getElementById('pax-phone').value,
     seats: Number(document.getElementById('pax-seats').value) || 1,
+    price: Number(document.getElementById('pax-price').value) || 0,
     paid: document.getElementById('pax-paid').checked,
     pickedUp: false
   };
@@ -659,6 +692,7 @@ function openEditPassengerModal(stopIdx, paxId){
         </select>
       </div>
       <div><label>Seats</label><input id="pax-seats" type="number" value="${p.seats}" min="1" max="${trip.carCapacity}" /></div>
+      <div><label>Price ($)</label><input id="pax-price" type="number" step="0.01" value="${p.price||0}" /></div>
       <div class="toggle-row"><label for="pax-paid">Marked as paid</label><input id="pax-paid" type="checkbox" ${p.paid?'checked':''} /></div>
       <div class="toggle-row"><label for="pax-pickedup">Marked as picked up</label><input id="pax-pickedup" type="checkbox" ${p.pickedUp?'checked':''} /></div>
     </div>
@@ -679,6 +713,7 @@ function saveEditedPassenger(oldStopIdx, paxId){
     name: document.getElementById('pax-name').value,
     phone: document.getElementById('pax-phone').value,
     seats: Number(document.getElementById('pax-seats').value) || 1,
+    price: Number(document.getElementById('pax-price').value) || 0,
     paid: document.getElementById('pax-paid').checked,
     pickedUp: document.getElementById('pax-pickedup').checked,
   };
@@ -720,19 +755,25 @@ function renderDrivingMode(){
   const seatsAtStop = (stop.passengers||[]).reduce((a,p)=>a+Number(p.seats||0),0);
   const overbooked = seatsAtStop > Number(trip.carCapacity||4);
 
-  const passengerRows = (stop.passengers||[]).map(p => `
+  const passengerRows = (stop.passengers||[]).map(p => {
+    const digits = (p.phone||'').replace(/[^0-9]/g,'');
+    const onTheWayMsg = encodeURIComponent(`Hi ${p.name}, I'm on my way to ${stop.name} (${stop.location||''}), should be there around ${stop.etaTime||'soon'}. See you shortly!`);
+    const arrivedMsg = encodeURIComponent(`Hi ${p.name}, I've arrived at ${stop.name} (${stop.location||''}). See you in a moment!`);
+    return `
     <div class="passenger-row">
       <div>
         <div style="font-size:14px; font-weight:500;">${escapeHtml(p.name)} <span style="color:var(--muted); font-weight:400; font-size:12px;">· ${p.seats} seat${p.seats==1?'':'s'}</span></div>
         <span class="badge ${p.paid?'paid':'unpaid'}">${p.paid?'Paid':'Unpaid'}</span>
       </div>
       <div class="actions">
-        ${p.phone ? `<a class="icon-btn" href="tel:${escapeAttr(p.phone)}"><button aria-label="Call ${escapeAttr(p.name)}">Call</button></a>` : ''}
-        ${p.phone ? `<a class="icon-btn" href="https://wa.me/${escapeAttr(p.phone.replace(/[^0-9]/g,''))}" target="_blank"><button aria-label="WhatsApp ${escapeAttr(p.name)}">WA</button></a>` : ''}
+        ${p.phone ? `<a class="icon-btn" href="tel:${escapeAttr(p.phone)}"><button aria-label="Call ${escapeAttr(p.name)}">📞</button></a>` : ''}
+        ${digits ? `<a class="icon-btn" href="https://wa.me/${digits}?text=${onTheWayMsg}" target="_blank"><button aria-label="On the way message to ${escapeAttr(p.name)}">🚗 On my way</button></a>` : ''}
+        ${digits ? `<a class="icon-btn" href="https://wa.me/${digits}?text=${arrivedMsg}" target="_blank"><button aria-label="Arrived message to ${escapeAttr(p.name)}">📍 I'm here</button></a>` : ''}
         <button onclick="togglePickedUp(${currentStopIndex}, '${p.id}')">${p.pickedUp ? '✓ Picked up' : 'Mark picked up'}</button>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   const upcoming = stops.slice(currentStopIndex+1).map((s, i) => {
     const seats = (s.passengers||[]).reduce((a,p)=>a+Number(p.seats||0),0);
@@ -756,10 +797,30 @@ function renderDrivingMode(){
       ${navButtonsHtml(stop.lat, stop.lng)}
       ${overbooked ? `<div class="warn-banner" style="margin-bottom:10px;">⚠ ${seatsAtStop} of ${trip.carCapacity} seats booked here</div>` : ''}
       ${passengerRows}
-      <button class="primary" style="width:100%; margin-top:14px;" onclick="advanceStop()">Arrived at ${escapeHtml(stop.name)}</button>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button style="flex:1;" onclick="notifyAllArrived(${currentStopIndex})">📍 Notify all: I'm here</button>
+        <button class="primary" style="flex:1;" onclick="advanceStop()">Arrived at ${escapeHtml(stop.name)}</button>
+      </div>
     </div>
     ${upcoming ? `<div style="font-size:12px; color:var(--muted); margin-bottom:8px;">UPCOMING STOPS</div>${upcoming}` : ''}
   `;
+}
+
+function notifyAllArrived(stopIdx){
+  const trip = getCurrentTrip();
+  const stop = trip.stops[stopIdx];
+  const withPhones = (stop.passengers||[]).filter(p => p.phone);
+  if (withPhones.length === 0){
+    alert("No passengers with a phone number at this stop yet.");
+    return;
+  }
+  // Opens one WhatsApp tab per passenger. Browsers may block after the first —
+  // if that happens, allow popups for this site once, or tap "I'm here" per passenger above.
+  withPhones.forEach((p, i) => {
+    const digits = p.phone.replace(/[^0-9]/g,'');
+    const msg = encodeURIComponent(`Hi ${p.name}, I've arrived at ${stop.name} (${stop.location||''}). See you in a moment!`);
+    setTimeout(() => window.open(`https://wa.me/${digits}?text=${msg}`, '_blank'), i * 400);
+  });
 }
 
 function togglePickedUp(stopIdx, paxId){
