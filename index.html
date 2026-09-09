@@ -243,7 +243,27 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 // Simple client-side passcode gate — change this before deploying.
-const ADMIN_PASSCODE = "changeme";
+const ADMIN_PASSCODE = "Nirmalcarpool@2026";
+
+// Common landmarks along the Sault Ste. Marie -> Toronto corridor.
+// Used to quick-fill the "Add stop" form instead of retyping each trip.
+const STOP_TEMPLATES = [
+  { name: "Sault Ste. Marie", location: "Start of route", lat: 46.5153817, lng: -84.3330487, distanceKm: 0 },
+  { name: "Espanola", location: "Common fuel/washroom stop", lat: 46.2647877, lng: -81.7701891, distanceKm: 260 },
+  { name: "Sudbury", location: "Tim Hortons, 1486 LaSalle Blvd", lat: 46.522637, lng: -80.942712, distanceKm: 320 },
+  { name: "French River Trading Post", location: "20112 Settlers Rd, Alban", lat: 46.0281576, lng: -80.5930934, distanceKm: 430 },
+  { name: "Parry Sound", location: "Hwy 400", lat: 45.3436156, lng: -80.033885, distanceKm: 560 },
+  { name: "Webers, Orillia", location: "8825 ON-11, Orillia", lat: 44.694001, lng: -79.3988953, distanceKm: 730 },
+  { name: "Toronto", location: "End of route", lat: 43.6548046, lng: -79.3883031, distanceKm: 960 },
+];
+
+function mapsLinks(lat, lng){
+  if (lat == null || lng == null) return null;
+  return {
+    google: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`,
+    apple: `https://maps.apple.com/?daddr=${lat},${lng}`
+  };
+}
 
 /* =========================================================================
    STATE
@@ -469,6 +489,7 @@ function renderTripSheet(){
             <div class="mono" style="font-size:12px; color:var(--muted);">${stop.distanceKm||0} km · ${stop.etaTime||''}</div>
           </div>
           <div style="font-size:13px; color:var(--muted); margin-bottom:4px;">${escapeHtml(stop.location||'')}</div>
+          ${navButtonsHtml(stop.lat, stop.lng)}
           ${overbooked ? `<div class="warn-banner">⚠ ${seatsAtStop} of ${trip.carCapacity} seats booked at this point</div>` : ''}
           ${passengerRows}
           <div style="display:flex; gap:8px; margin-top:8px;">
@@ -483,13 +504,26 @@ function renderTripSheet(){
 
 /* ---------- Add / edit stop ---------- */
 function openAddStopModal(){
+  const templateOptions = STOP_TEMPLATES.map((t,i) => `<option value="${i}">${escapeHtml(t.name)}</option>`).join('');
   renderModal(`
     <div class="modal-header"><h2>Add stop</h2><button onclick="closeModal()">&times;</button></div>
     <div class="fieldset">
+      <div>
+        <label>Quick-fill from a usual stop</label>
+        <select id="stop-template" onchange="applyStopTemplate(this.value)">
+          <option value="">— Type your own below —</option>
+          ${templateOptions}
+        </select>
+      </div>
       <div><label>Stop name</label><input id="stop-name" placeholder="e.g. Sudbury" /></div>
       <div><label>Location / landmark</label><input id="stop-location" placeholder="e.g. Petro-Canada, LaSalle Blvd" /></div>
       <div><label>Distance from start (km)</label><input id="stop-distance" type="number" /></div>
       <div><label>ETA</label><input id="stop-eta" type="time" /></div>
+      <div style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Latitude (optional)</label><input id="stop-lat" type="number" step="any" placeholder="e.g. 46.5226" /></div>
+        <div style="flex:1;"><label>Longitude (optional)</label><input id="stop-lng" type="number" step="any" placeholder="e.g. -80.9427" /></div>
+      </div>
+      <div style="font-size:12px; color:var(--muted);">Lat/lng power the "Open in Google Maps" / "Open in Apple Maps" buttons on this stop. Quick-fill sets these for you automatically.</div>
     </div>
     <div style="display:flex; gap:8px; margin-top:20px;">
       <button style="flex:1;" onclick="closeModal()">Cancel</button>
@@ -498,14 +532,28 @@ function openAddStopModal(){
   `);
 }
 
+function applyStopTemplate(idx){
+  if (idx === "") return;
+  const t = STOP_TEMPLATES[Number(idx)];
+  document.getElementById('stop-name').value = t.name;
+  document.getElementById('stop-location').value = t.location;
+  document.getElementById('stop-distance').value = t.distanceKm;
+  document.getElementById('stop-lat').value = t.lat;
+  document.getElementById('stop-lng').value = t.lng;
+}
+
 function saveNewStop(){
   const trip = getCurrentTrip();
+  const lat = document.getElementById('stop-lat').value;
+  const lng = document.getElementById('stop-lng').value;
   const stop = {
     id: 'stop_' + Date.now(),
     name: document.getElementById('stop-name').value || 'Untitled stop',
     location: document.getElementById('stop-location').value,
     distanceKm: Number(document.getElementById('stop-distance').value) || 0,
     etaTime: document.getElementById('stop-eta').value,
+    lat: lat === "" ? null : Number(lat),
+    lng: lng === "" ? null : Number(lng),
     passengers: []
   };
   const stops = [...(trip.stops||[]), stop].sort((a,b)=>(a.distanceKm||0)-(b.distanceKm||0));
@@ -522,6 +570,11 @@ function openEditStopModal(idx){
       <div><label>Location / landmark</label><input id="stop-location" value="${escapeAttr(stop.location||'')}" /></div>
       <div><label>Distance from start (km)</label><input id="stop-distance" type="number" value="${stop.distanceKm||0}" /></div>
       <div><label>ETA</label><input id="stop-eta" type="time" value="${stop.etaTime||''}" /></div>
+      <div style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Latitude (optional)</label><input id="stop-lat" type="number" step="any" value="${stop.lat ?? ''}" /></div>
+        <div style="flex:1;"><label>Longitude (optional)</label><input id="stop-lng" type="number" step="any" value="${stop.lng ?? ''}" /></div>
+      </div>
+      <div style="font-size:12px; color:var(--muted);">Lat/lng power the "Open in Google Maps" / "Open in Apple Maps" buttons on this stop.</div>
     </div>
     <div style="display:flex; gap:8px; margin-top:20px;">
       <button style="flex:1;" onclick="closeModal()">Cancel</button>
@@ -533,12 +586,16 @@ function openEditStopModal(idx){
 function saveEditedStop(idx){
   const trip = getCurrentTrip();
   const stops = [...trip.stops];
+  const lat = document.getElementById('stop-lat').value;
+  const lng = document.getElementById('stop-lng').value;
   stops[idx] = {
     ...stops[idx],
     name: document.getElementById('stop-name').value,
     location: document.getElementById('stop-location').value,
     distanceKm: Number(document.getElementById('stop-distance').value) || 0,
     etaTime: document.getElementById('stop-eta').value,
+    lat: lat === "" ? null : Number(lat),
+    lng: lng === "" ? null : Number(lng),
   };
   stops.sort((a,b)=>(a.distanceKm||0)-(b.distanceKm||0));
   saveTrip({ ...trip, stops }).then(closeModal);
@@ -696,6 +753,7 @@ function renderDrivingMode(){
       <div class="eyebrow">NEXT STOP${overbooked ? ' · OVERBOOKED' : ''}</div>
       <div class="name">${escapeHtml(stop.name)}</div>
       <div class="meta">${escapeHtml(stop.location||'')} · ETA ${stop.etaTime||'—'}</div>
+      ${navButtonsHtml(stop.lat, stop.lng)}
       ${overbooked ? `<div class="warn-banner" style="margin-bottom:10px;">⚠ ${seatsAtStop} of ${trip.carCapacity} seats booked here</div>` : ''}
       ${passengerRows}
       <button class="primary" style="width:100%; margin-top:14px;" onclick="advanceStop()">Arrived at ${escapeHtml(stop.name)}</button>
@@ -736,6 +794,17 @@ function closeModal(){
 /* =========================================================================
    UTIL
    ========================================================================= */
+function navButtonsHtml(lat, lng){
+  const links = mapsLinks(lat, lng);
+  if (!links) return `<div style="font-size:12px; color:var(--muted); margin-bottom:6px;">No coordinates saved for this stop yet — add lat/lng when editing to enable navigation buttons.</div>`;
+  return `
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <a class="icon-btn" style="flex:1;" href="${links.google}" target="_blank"><button style="width:100%;">📍 Google Maps</button></a>
+      <a class="icon-btn" style="flex:1;" href="${links.apple}" target="_blank"><button style="width:100%;">🧭 Apple Maps</button></a>
+    </div>
+  `;
+}
+
 function escapeHtml(str){
   return String(str||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
