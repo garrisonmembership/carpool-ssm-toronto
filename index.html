@@ -184,7 +184,10 @@
 
     <!-- ---------- TRIP SHEET VIEW ---------- -->
     <div id="view-trip-sheet" class="hidden">
-      <button onclick="goToTripList()" style="margin-bottom:12px;">&larr; All trips</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <button onclick="goToTripList()">&larr; All trips</button>
+        <button onclick="openEditTripModal()">Edit trip details</button>
+      </div>
 
       <div class="stat-row" id="trip-stats"></div>
 
@@ -462,6 +465,39 @@ function createTrip(){
   newDoc.set({ date, departureTime, carCapacity, stops: [] }).then(() => {
     closeModal();
     openTrip(newDoc.id);
+  });
+}
+
+function openEditTripModal(){
+  const trip = getCurrentTrip();
+  if (!trip) return;
+  renderModal(`
+    <div class="modal-header"><h2>Edit trip details</h2><button class="danger" onclick="deleteTripFromSheet()">Delete trip</button></div>
+    <div class="fieldset">
+      <div><label>Date</label><input id="edit-trip-date" type="date" value="${escapeAttr(trip.date||'')}" /></div>
+      <div><label>Departure time</label><input id="edit-trip-departure" type="time" value="${escapeAttr(trip.departureTime||'')}" /></div>
+      <div><label>Car capacity (seats)</label><input id="edit-trip-capacity" type="number" value="${trip.carCapacity||4}" min="1" max="8" /></div>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:20px;">
+      <button style="flex:1;" onclick="closeModal()">Cancel</button>
+      <button class="primary" style="flex:1;" onclick="saveEditedTrip()">Save changes</button>
+    </div>
+  `);
+}
+
+function saveEditedTrip(){
+  const trip = getCurrentTrip();
+  const date = document.getElementById('edit-trip-date').value;
+  const departureTime = document.getElementById('edit-trip-departure').value;
+  const carCapacity = Number(document.getElementById('edit-trip-capacity').value) || 4;
+  saveTrip({ ...trip, date, departureTime, carCapacity }).then(closeModal);
+}
+
+function deleteTripFromSheet(){
+  if (!confirm("Delete this entire trip, including all stops and passengers? This can't be undone.")) return;
+  db.collection('trips').doc(currentTripId).delete().then(() => {
+    closeModal();
+    goToTripList();
   });
 }
 
