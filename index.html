@@ -273,6 +273,50 @@ function mapsLinks(lat, lng){
   };
 }
 
+// Fuel cost estimate — rough, based on average sedan efficiency and gas price.
+// Adjust these two numbers to match your actual car and current gas prices.
+const FUEL_EFFICIENCY_L_PER_100KM = 8.5;
+const FUEL_PRICE_PER_LITER = 1.55;
+
+function estimateFuelCost(totalKm){
+  return (totalKm / 100) * FUEL_EFFICIENCY_L_PER_100KM * FUEL_PRICE_PER_LITER;
+}
+
+// Weather — uses Open-Meteo (free, no API key needed).
+let weatherCache = {}; // keyed by "lat,lng" rounded
+
+const WEATHER_CODE_MAP = {
+  0:"Clear sky", 1:"Mostly clear", 2:"Partly cloudy", 3:"Overcast",
+  45:"Fog", 48:"Freezing fog",
+  51:"Light drizzle", 53:"Drizzle", 55:"Heavy drizzle",
+  56:"Freezing drizzle", 57:"Freezing drizzle",
+  61:"Light rain", 63:"Rain", 65:"Heavy rain",
+  66:"Freezing rain", 67:"Freezing rain",
+  71:"Light snow", 73:"Snow", 75:"Heavy snow", 77:"Snow grains",
+  80:"Light showers", 81:"Showers", 82:"Heavy showers",
+  85:"Snow showers", 86:"Heavy snow showers",
+  95:"Thunderstorm", 96:"Thunderstorm w/ hail", 99:"Thunderstorm w/ hail"
+};
+
+async function fetchWeather(lat, lng){
+  const key = `${lat.toFixed(1)},${lng.toFixed(1)}`;
+  if (weatherCache[key]) return weatherCache[key];
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true&temperature_unit=celsius`);
+    const data = await res.json();
+    const cw = data.current_weather;
+    const result = {
+      tempC: Math.round(cw.temperature),
+      condition: WEATHER_CODE_MAP[cw.weathercode] || "—"
+    };
+    weatherCache[key] = result;
+    return result;
+  } catch(e){
+    console.error("Weather fetch failed", e);
+    return null;
+  }
+}
+
 /* =========================================================================
    STATE
    ========================================================================= */
@@ -793,7 +837,6 @@ function renderDrivingMode(){
 
   const passengerRows = (stop.passengers||[]).map(p => {
     const digits = (p.phone||'').replace(/[^0-9]/g,'');
-    const onTheWayMsg = encodeURIComponent(`Hi ${p.name}, I'm on my way to ${stop.name} (${stop.location||''}), should be there around ${stop.etaTime||'soon'}. See you shortly!`);
     const arrivedMsg = encodeURIComponent(`Hi ${p.name}, I've arrived at ${stop.name} (${stop.location||''}). See you in a moment!`);
     return `
     <div class="passenger-row">
@@ -803,9 +846,8 @@ function renderDrivingMode(){
       </div>
       <div class="actions">
         ${p.phone ? `<a class="icon-btn" href="tel:${escapeAttr(p.phone)}"><button aria-label="Call ${escapeAttr(p.name)}">📞</button></a>` : ''}
-        ${digits ? `<a class="icon-btn" href="https://wa.me/${digits}?text=${onTheWayMsg}" target="_blank"><button aria-label="On the way message to ${escapeAttr(p.name)}">🚗 On my way</button></a>` : ''}
-        ${digits ? `<a class="icon-btn" href="https://wa.me/${digits}?text=${arrivedMsg}" target="_blank"><button aria-label="Arrived message to ${escapeAttr(p.name)}">📍 I'm here</button></a>` : ''}
-        <button onclick="togglePickedUp(${currentStopIndex}, '${p.id}')">${p.pickedUp ? '✓ Picked up' : 'Mark picked up'}</button>
+        ${digits ? `<a class="icon-btn" href="https://wa.me/${digits}?text=${arrivedMsg}" target="_blank"><button aria-label="WhatsApp ${escapeAttr(p.name)}">💬</button></a>` : ''}
+        <button onclick="togglePickedUp(${currentStopIndex}, '${p.id}')">${p.pickedUp ? '✓' : 'Mark picked up'}</button>
       </div>
     </div>
   `;
@@ -825,7 +867,14 @@ function renderDrivingMode(){
     `;
   }).join('');
 
+  const totalKm = stops.length ? Math.max(...stops.map(s => Number(s.distanceKm||0))) : 0;
+  const fuelCost = estimateFuelCost(totalKm);
+
   container.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; font-size:13px; color:var(--ink);">
+      <div id="weather-chip">${stop.lat!=null && stop.lng!=null ? 'Loading weather…' : 'No coordinates for weather'}</div>
+      <div class="mono">⛽ ~$${fuelCost.toFixed(0)} fuel (${totalKm} km trip)</div>
+    </div>
     <div class="next-stop-card">
       <div class="eyebrow">NEXT STOP${overbooked ? ' · OVERBOOKED' : ''}</div>
       <div class="name">${escapeHtml(stop.name)}</div>
@@ -840,6 +889,14 @@ function renderDrivingMode(){
     </div>
     ${upcoming ? `<div style="font-size:12px; color:var(--muted); margin-bottom:8px;">UPCOMING STOPS</div>${upcoming}` : ''}
   `;
+
+  if (stop.lat != null && stop.lng != null){
+    fetchWeather(stop.lat, stop.lng).then(w => {
+      const chip = document.getElementById('weather-chip');
+      if (!chip) return; // view may have changed already
+      chip.textContent = w ? `${w.tempC}°C, ${w.condition} near ${stop.name}` : 'Weather unavailable';
+    });
+  }
 }
 
 function notifyAllArrived(stopIdx){
